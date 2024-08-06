@@ -1,0 +1,15 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Layer - Node-Fetch
+
+Resources:
+  SDKlayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: AWS-Layer-node-fetch
+      Description: AWS Custom Layer, node-fetch package
+      ContentUri: ./layer
+      CompatibleRuntimes:
+        - nodejs20.x
+      LicenseInfo: "Available under the MIT-0 license."
+      RetentionPolicy: Retain

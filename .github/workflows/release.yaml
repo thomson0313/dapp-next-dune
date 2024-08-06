@@ -1,0 +1,47 @@
+name: tag
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["deploy"]
+    branches: ["main"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Trigger Release Tag
+    runs-on: ubuntu-latest
+    # permissions:
+    #   contents: write # to be able to publish a GitHub release
+    #   issues: write # to be able to comment on released issues
+    #   pull-requests: write # to be able to comment on released pull requests
+    #   id-token: write # to enable use of OIDC for npm provenance
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    environment:
+      name: release
+    env:
+      APP: ${{ github.event.repository.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20.x"
+      # - name: Install prerequisites
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y curl wget git ca-certificates
+      #     yarn global add semantic-release @semantic-release/github --dev
+      - name: Trigger Release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_ACCESS_TOKEN }}
+        run: |
+          npx semantic-release

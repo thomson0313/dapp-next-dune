@@ -1,0 +1,161 @@
+name: buildx
+
+env:
+  APP: ${{ github.event.repository.name }}
+  AWS_ECR: 178687878333.dkr.ecr.eu-west-1.amazonaws.com/ithacanoemon-interface
+  NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
+  NEXT_PUBLIC_BACKEND_URL: ${{ vars.NEXT_PUBLIC_BACKEND_URL }}
+  NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ vars.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID }}
+  NEXT_PUBLIC_IS_LOCATION_RESTRICTED: ${{ vars.NEXT_PUBLIC_IS_LOCATION_RESTRICTED }}
+  NEXT_PUBLIC_GOOGLE_ANALYTICS: ${{ vars.NEXT_PUBLIC_GOOGLE_ANALYTICS }}
+  NEXT_PUBLIC_MIXPANEL_TOKEN: ${{ secrets.NEXT_PUBLIC_MIXPANEL_TOKEN }}
+  NEXT_PUBLIC_LIVE_COIN_WATCH_API_KEY: ${{ secrets.NEXT_PUBLIC_LIVE_COIN_WATCH_API_KEY }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          # - linux/arm64
+        include:
+          # - platform: linux/arm64
+          #   os: ubuntu-latest
+          #   arch: arm64
+          - platform: linux/amd64
+            os: ubuntu-latest
+            arch: amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.AWS_ECR }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Define Variables
+        id: vars
+        run: |
+          echo "::set-output name=version::`echo ${{ github.event.workflow_run.head_sha || github.sha }} | cut -c1-8`"
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.AWS_ECR }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=${{ env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID }}
+            NEXT_PUBLIC_BUILD_ID=${{ github.sha }}
+            NEXT_PUBLIC_MIXPANEL_TOKEN=${{ env.NEXT_PUBLIC_MIXPANEL_TOKEN }}
+            NEXT_PUBLIC_LIVE_COIN_WATCH_API_KEY=${{ env.NEXT_PUBLIC_LIVE_COIN_WATCH_API_KEY }}
+            NEXT_PUBLIC_GOOGLE_ANALYTICS=${{ env.NEXT_PUBLIC_GOOGLE_ANALYTICS }}
+          ## Alternative GH Actions Cache - Experimental
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+      - name: Failure Notification
+        if: failure()
+        uses: ithaca-protocol/infra-github-actions-ithaca/slack-notifications@main
+        with:
+          slack_notification_webhook: ${{ secrets.SLACK_WEBHOOK_ARGOCD_DEPLOY }}
+          slack_message: "*[ERROR!] FAILED TO BUILD!!* `${{ github.actor }}` tried to build docker image for `${{ env.APP }}`.\n `${{ steps.vars.outputs.version }}` on `${{ github.ref_name }}`. The details at: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  merge:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.AWS_ECR }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.AWS_ECR }}@sha256:%s ' *)
+      - name: Convert in-place branch tag to commit ref
+        id: retag
+        env:
+          REF_NAME: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || github.ref_name }}
+        run: |
+          export GITHUB_SHORT_SHA=`echo ${{ github.sha }} | cut -c1-8`
+          export FORMATTED_REF_NAME=$(echo "${REF_NAME}" | tr '/' '-')
+          curl -L https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64 >regctl
+          chmod 755 regctl
+          ./regctl image copy ${{ env.AWS_ECR }}:${FORMATTED_REF_NAME} ${{ env.AWS_ECR }}:${GITHUB_SHORT_SHA}
+          echo "::set-output name=version::${GITHUB_SHORT_SHA}"
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.AWS_ECR }}:${{ steps.meta.outputs.version }}
+      - name: Failure Notification
+        if: failure()
+        uses: ithaca-protocol/infra-github-actions-ithaca/slack-notifications@main
+        env:
+          COMMIT_SHA: echo ${{ github.event.workflow_run.head_sha || github.sha }} | cut -c1-8
+        with:
+          slack_notification_webhook: ${{ secrets.SLACK_WEBHOOK_ARGOCD_DEPLOY }}
+          slack_message: "*[ERROR!] DOCKER BUILD PROCESS FAILED TO COMPLETE SUCCESSFULLY!!* `${{ github.actor }}` tried to build docker image for `${{ env.APP }}`.\n `${{ steps.retag.outputs.version }}` on `${{ github.ref_name }}`. The details at: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+    outputs:
+      version: ${{ steps.retag.outputs.version }}

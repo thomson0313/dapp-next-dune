@@ -1,0 +1,87 @@
+environment: canary-sepolia
+cluster: ithacanoemon
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+commonLabels:
+  app.kubernetes.io/part-of: ithaca-interface-canary-sepolia
+  app.kubernetes.io/component: ithaca-interface
+
+deployment:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  imagePullSecrets: []
+  image:
+    repository: 178687878333.dkr.ecr.eu-west-1.amazonaws.com/ithacanoemon-interface
+    pullPolicy: IfNotPresent
+    tag: "main"
+
+    args:
+      - ""
+
+  volumes:
+    - name: environment-config
+      configMap:
+        name: ithaca-interface-canary-sepolia-config
+  volumeMounts:
+    - name: environment-config
+      mountPath: /app/public/environment
+      readOnly: true
+
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+
+  envFrom:
+    # - type: configmap
+    #   suffix: config
+    # - type: secret
+    #   name: ithaca-interface-canary-sepolia-secret
+
+  livenessProbe: {}
+  readinessProbe: {}
+
+configMap:
+  config:
+    suffix: config
+    data:
+      environment.json: |
+        {
+            "API_URL": "https://app.canary.ithacanoemon.tech/api/v1",
+            "WS_URL": "wss://app.canary.ithacanoemon.tech/wss",
+            "POINTS_URL": "https://app.canary.ithacanoemon.tech/api/points/v3",
+            "KYC_URL": "https://app.canary.ithacanoemon.tech",
+            "GRAFANA_URL": "https://dashboard.canary.ithacanoemon.tech/",
+            "TRADING_URL": "https://app.canary.ithacanoemon.tech/",
+            "SUBGRAPH_URL": "https://api.studio.thegraph.com/query/43740/ithaca-arb-sepolia-canary/v1.0.1",
+            "SQUID_API_URL": "https://testnet.api.squidrouter.com"
+        }
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: []
+
+ingress: []
+
+externalSecret:
+  enabled: false
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3

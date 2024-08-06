@@ -1,0 +1,9 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "aws-lambda-node-fetch-layer"
+resolve_s3 = true
+s3_prefix = "aws-lambda-node-fetch-layer"
+region = "eu-west-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = []

@@ -1,0 +1,23 @@
+name: Lint Code
+
+on: [pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20.11.0
+
+      - name: Install Dependencies
+        run: yarn install
+      - name: Run Lint
+        run: yarn lint
+      - name: Run Prettier
+        run: yarn format
+      - name: Run Typescript
+        run: yarn tsc

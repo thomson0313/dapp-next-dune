@@ -1,0 +1,10 @@
+.receiveTitle {
+  font-size: rem(16);
+  color: var(--white);
+  font-weight: 400;
+}
+
+.withdrawalInstructions {
+  color: var(--green-30);
+  @include font-size("text-xs", "regular");
+}
